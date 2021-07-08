@@ -34,8 +34,10 @@ class DBClient {
         loadPop()
     }
     
-    func loadPage() {
+    func loadPage(completionHandler: @escaping () -> ()) {
         pageLoad += 1
+        
+        print(pageLoad)
         
         URLSession.shared.dataTask(with: url) { data, response, error in
             
@@ -60,7 +62,11 @@ class DBClient {
             }
             
             self.nowPlayingMovies.append(contentsOf: local)
-            self.loadCovers()
+            completionHandler()
+            
+            self.loadCovers {
+                completionHandler()
+            }
         }
         .resume()
     }
@@ -98,26 +104,26 @@ class DBClient {
             }
             
             self.popularMovies.append(contentsOf: local)
-            self.loadCovers()
             print(self.popularMovies)
         }
         .resume()
     }
     
-    func reload() {
+    func reload(completionHandler: @escaping () -> ()) {
         nowPlayingMovies = []
         coverCollection = [:]
         pageLoad = 0
         
-        loadPage()
+        loadPage(completionHandler: completionHandler)
     }
     
-    private func loadCovers() {
+    private func loadCovers(completionHandler: @escaping () -> ()) {
         for movie in self.popularMovies {
             if let movieId = movie.id {
                 if coverCollection[movieId] == nil {
                     let img = movie.image
                     coverCollection.updateValue(img, forKey: movieId)
+                    completionHandler()
                 }
             }
         }
@@ -127,6 +133,7 @@ class DBClient {
                 if coverCollection[movieId] == nil {
                     let img = movie.image
                     coverCollection.updateValue(img, forKey: movieId)
+                    completionHandler()
                 }
             }
         }

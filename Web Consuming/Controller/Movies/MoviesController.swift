@@ -17,11 +17,20 @@ class MoviesController: UIViewController, UISearchResultsUpdating, UITableViewDa
     var searchController: UISearchController?
     var refreshControl: UIRefreshControl?
     
-    enum MovieListType {
-        case playing, favorites
+    enum MovieListType: CaseIterable {
+        case favorites, playing
+        
+        var title: String {
+            switch self {
+            case .playing:
+                return "Now Playing"
+            case .favorites:
+                return "Popular Movies"
+            }
+        }
     }
     
-    var selected: (type: MovieListType, n: Int)?
+    let sections = MovieListType.allCases
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -38,123 +47,116 @@ class MoviesController: UIViewController, UISearchResultsUpdating, UITableViewDa
         moviesTableView.delegate = self
         moviesTableView.separatorStyle = .none
         
-        dbClient.loadPage()
         
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-            self.moviesTableView.reloadData()
+        
+        dbClient.loadPage {
+            DispatchQueue.main.async {
+                self.moviesTableView.reloadData()
+            }
         }
     }
     
     @objc func refresh() {
-        dbClient.reload()
-        moviesTableView.reloadData()
+        dbClient.reload {
+            DispatchQueue.main.async {
+                self.moviesTableView.reloadData()
+            }
+        }
         refreshControl?.endRefreshing()
     }
     
     // MARK: -- load data
     
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        dbClient.nowPlayingMovies.count + 4 // 2 titles & 2 popular movies
+    func numberOfSections(in tableView: UITableView) -> Int {
+        sections.count
     }
     
-    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        switch indexPath.row {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        let currentSection = sections[section]
         
-        case 0:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "title-cell") as! TitleCell
-            
-            cell.title.text = "Popular Movies"
-            
-            return cell
-            
-        case 1...2:
-            let n = indexPath.row - 1
-            
-            let cell = tableView.dequeueReusableCell(withIdentifier: "movie-cell") as! MovieCell
-            
-            if n > dbClient.popularMovies.count {
-                return cell
-            }
-            
-            cell.title.text = dbClient.popularMovies[n].title
-            cell.overview.text = dbClient.popularMovies[n].overview
-            cell.voteAverage.text = String(dbClient.popularMovies[n].voteAverage ?? 10)
-
-            let movieId = dbClient.popularMovies[n].id
-            cell.img.image = dbClient.coverCollection[movieId ?? -1]
-            cell.img.layer.cornerRadius = 10
-            
-            return cell
-            
-        case 3:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "title-cell") as! TitleCell
-            
-            cell.title.text = "Now Playing"
-            
-            return cell
-            
-        case 4...:
-            let n = indexPath.row - 4
-            
-            let cell = tableView.dequeueReusableCell(withIdentifier: "movie-cell") as! MovieCell
-            
-            cell.title.text = dbClient.nowPlayingMovies[n].title
-            cell.overview.text = dbClient.nowPlayingMovies[n].overview
-            cell.voteAverage.text = String(dbClient.nowPlayingMovies[n].voteAverage ?? 10)
-            
-            let movieId = dbClient.nowPlayingMovies[n].id
-            cell.img.image = dbClient.coverCollection[movieId ?? -1]
-            cell.img.layer.cornerRadius = 10
-            
-            return cell
-        default:
-            fatalError()
+        switch currentSection {
+        case .favorites:
+            return dbClient.popularMovies.count
+        case .playing:
+            return dbClient.nowPlayingMovies.count
         }
     }
     
-    // MARK: -- extra feature: pagination
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        
+        let currentSection = sections[indexPath.section]
+        let movie: Movie
+        
+        switch currentSection {
+        case .favorites:
+            movie = dbClient.popularMovies[indexPath.row]
+            
+        case .playing:
+            movie = dbClient.nowPlayingMovies[indexPath.row]
+        }
+        
+        let cell = tableView.dequeueReusableCell(withIdentifier: "movie-cell") as! MovieCell
+        
+        cell.title.text = movie.title
+        cell.overview.text = movie.overview
+        cell.voteAverage.text = String(movie.voteAverage ?? 10)
+
+        let movieId = movie.id
+        cell.img.image = dbClient.coverCollection[movieId ?? -1]
+        cell.img.layer.cornerRadius = 10
+        
+        return cell
+    }
+    
+    func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+        let movieCellHeader = MovieCellHeader()
+        let currentSection = sections[section]
+        movieCellHeader.titleLabel.text = currentSection.title
+        return movieCellHeader
+    }
+    
+    // MARK: -- pagination
     
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        dbClient.loadPage()
-        moviesTableView.reloadData()
+        let currentOffset = scrollView.contentOffset.y
+        let maximumOffset = scrollView.contentSize.height - scrollView.frame.size.height
+
+        if maximumOffset - currentOffset <= 10 {
+            dbClient.loadPage {
+                DispatchQueue.main.async {
+                    self.moviesTableView.reloadData()
+                }
+            }
+        }
     }
     
     // MARK: -- show details
     
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        switch indexPath.row {
-        case 1...2:
-            selected = (.favorites, indexPath.row - 1)
-            performSegue(withIdentifier: "movies-to-details", sender: indexPath.row)
-            
-        case 4...:
-            selected = (.playing, indexPath.row - 4)
-            performSegue(withIdentifier: "movies-to-details", sender: indexPath.row)
-
-        default:
-            return
-        }
+        performSegue(withIdentifier: "movies-to-details", sender: indexPath)
     }
     
     override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
-        guard let destination = segue.destination as? DetailsController else { return }
-        guard let n = selected?.n else { return }
+        guard let destination = segue.destination as? DetailsController else { fatalError() }
+        guard let indexPath = sender as? IndexPath else { fatalError() }
+        
+        let movie: Movie
+        
+        switch (sections[indexPath.section])  {
+        case .favorites:
+            movie = dbClient.popularMovies[indexPath.row]
 
-        if selected?.type == .favorites {
-            destination.imageView = dbClient.coverCollection[dbClient.popularMovies[n].id!]
-            destination.tituloString = dbClient.popularMovies[n].title
-            destination.generesString = dbClient.getGeneresText(from: dbClient.popularMovies[n])
-            destination.voteString = String(dbClient.popularMovies[n].voteAverage ?? 10)
-
-            destination.overviewString = dbClient.popularMovies[n].overview
-        } else {
-            destination.imageView = dbClient.coverCollection[dbClient.nowPlayingMovies[n].id!]
-            destination.tituloString = dbClient.nowPlayingMovies[n].title
-            destination.generesString = dbClient.getGeneresText(from: dbClient.nowPlayingMovies[n])
-            destination.voteString = String(dbClient.nowPlayingMovies[n].voteAverage ?? 10)
-
-            destination.overviewString = dbClient.nowPlayingMovies[n].overview
+        case .playing:
+            movie = dbClient.nowPlayingMovies[indexPath.row]
+            
         }
+        
+        destination.imageView = dbClient.coverCollection[movie.id!]
+        destination.tituloString = movie.title
+        destination.generesString = dbClient.getGeneresText(from: movie)
+        destination.voteString = String(movie.voteAverage ?? 10)
+
+        destination.overviewString = movie.overview
     }
     
     // MARK: -- load search
